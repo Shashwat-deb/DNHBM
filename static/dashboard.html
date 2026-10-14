@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Network Health &amp; Bandwidth Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #222; }
+  header { background: #1f2d3d; color: #fff; padding: 12px 20px; }
+  main { padding: 16px 20px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+  section { background: #fff; border-radius: 6px; padding: 12px 16px; box-shadow: 0 1px 3px #0002; }
+  h2 { margin: 0 0 8px; font-size: 1rem; }
+  table { width: 100%; border-collapse: collapse; font-size: .9rem; }
+  td, th { text-align: left; padding: 4px 6px; border-bottom: 1px solid #eee; }
+  .online { color: #1a7f37; font-weight: 600; } .offline { color: #cf222e; font-weight: 600; }
+  .registered { color: #9a6700; font-weight: 600; }
+  .alert { background: #fff1f0; border-left: 4px solid #cf222e; padding: 4px 8px; margin: 4px 0; font-size: .85rem; }
+  .full { grid-column: 1 / -1; } label { margin-right: 8px; } .msg { font-size: .85rem; margin-left: 8px; }
+  .cur { display: flex; gap: 14px; flex-wrap: wrap; } .cur div { min-width: 90px; }
+  .cur b { display: block; font-size: 1.3rem; }
+</style>
+</head>
+<body>
+<header><h1 style="margin:0;font-size:1.2rem">Distributed Network Health &amp; Bandwidth Monitor</h1></header>
+<main>
+  <section>
+    <h2>Node status (FR-11)</h2>
+    <table id="nodes"><thead><tr><th>Node</th><th>Host</th><th>OS</th><th>Status</th><th>Last seen</th></tr></thead><tbody></tbody></table>
+  </section>
+  <section>
+    <h2>Alert notifications (FR-12)</h2>
+    <div id="alerts"></div>
+    <button id="clear">Clear alerts</button>
+  </section>
+  <section class="full">
+    <h2>Live metrics (FR-09)</h2>
+    <label>Node <select id="liveNode"></select></label>
+    <div class="cur" id="cur"></div>
+    <canvas id="liveChart" height="70"></canvas>
+  </section>
+  <section class="full">
+    <h2>Historical trends (FR-10)</h2>
+    <label>Node <select id="histNode"></select></label>
+    <label>Range <select id="range">
+      <option value="5">Last 5 min</option><option value="15">Last 15 min</option>
+      <option value="60" selected>Last 1 hour</option><option value="1440">Last 24 hours</option></select></label>
+    <label>Metric <select id="histMetric"></select></label>
+    <button id="viewTrends">View Trends</button>
+    <canvas id="histChart" height="70"></canvas>
+  </section>
+  <section>
+    <h2>Threshold configuration (FR-13)</h2>
+    <label>Metric <select id="thMetric"></select></label>
+    <label>Limit <input id="thLimit" type="number" step="any" min="0" style="width:80px"></label>
+    <button id="thSave">Save</button><span class="msg" id="thMsg"></span>
+    <table id="thresholds"><thead><tr><th>Metric</th><th>Limit</th></tr></thead><tbody></tbody></table>
+  </section>
+</main>
+<script>
+const METRICS = ["cpu_usage","memory_usage","network_throughput","packet_loss","connection_count"];
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const get = async u => (await fetch(u)).json();
+for (const id of ["histMetric","thMetric"]) $(id).innerHTML = METRICS.map(m => `<option>${m}</option>`).join("");
+
+function mkChart(el, datasets) {
+  return new Chart(el, { type: "line", data: { labels: [], datasets },
+    options: { animation: false, scales: { x: { ticks: { maxTicksLimit: 8 } } } } });
+}
+const liveChart = mkChart($("liveChart"), [
+  {label:"CPU %", data:[], borderColor:"#cf222e"}, {label:"Memory %", data:[], borderColor:"#0969da"},
+  {label:"Throughput Mbps", data:[], borderColor:"#1a7f37"}]);
+const histChart = mkChart($("histChart"), [{label:"", data:[], borderColor:"#8250df"}]);
+
+function fillNodeSelects(nodes) {
+  for (const id of ["liveNode","histNode"]) {
+    const sel = $(id), cur = sel.value;
+    sel.innerHTML = nodes.map(n => `<option>${esc(n.node_id)}</option>`).join("");
+    if (cur) sel.value = cur;
+  }
+}
+async function refreshNodes() {
+  const nodes = await get("/api/nodes");
+  $("nodes").tBodies[0].innerHTML = nodes.map(n =>
+    `<tr><td>${esc(n.node_id)}</td><td>${esc(n.hostname)}</td><td>${esc(n.os)}</td>
+     <td class="${esc(n.status)}">${esc(n.status)}</td><td>${n.age_seconds == null ? "—" : n.age_seconds + " s ago"}</td></tr>`).join("");
+  if ($("liveNode").options.length !== nodes.length) fillNodeSelects(nodes);
+}
+async function refreshAlerts() {
+  const a = (await get("/api/alerts?limit=30")).filter(x => x.is_active);
+  $("alerts").innerHTML = a.length ? a.map(x => `<div class="alert">${esc(x.timestamp.slice(11,19))} — ${esc(x.message)}</div>`).join("") : "No active alerts.";
+}
+async function refreshLive() {
+  const node = $("liveNode").value; if (!node) return;
+  const rows = (await get(`/api/metrics?node_id=${encodeURIComponent(node)}&minutes=5&limit=60`));
+  liveChart.data.labels = rows.map(r => r.timestamp.slice(11,19));
+  liveChart.data.datasets[0].data = rows.map(r => r.cpu_usage);
+  liveChart.data.datasets[1].data = rows.map(r => r.memory_usage);
+  liveChart.data.datasets[2].data = rows.map(r => r.network_throughput);
+  liveChart.update();
+  const l = rows[rows.length - 1];
+  $("cur").innerHTML = l ? [["CPU",l.cpu_usage+" %"],["Memory",l.memory_usage+" %"],["Throughput",l.network_throughput+" Mbps"],
+    ["Packet loss",l.packet_loss+" %"],["Connections",l.connection_count]].map(([k,v]) => `<div>${k}<b>${v}</b></div>`).join("") : "No data yet.";
+}
+async function refreshThresholds() {
+  const t = await get("/api/thresholds");
+  $("thresholds").tBodies[0].innerHTML = t.map(x => `<tr><td>${esc(x.metric_type)}</td><td>${esc(x.limit_value)}</td></tr>`).join("");
+}
+$("viewTrends").onclick = async () => {
+  const node = $("histNode").value, m = $("histMetric").value;
+  const rows = await get(`/api/metrics?node_id=${encodeURIComponent(node)}&minutes=${$("range").value}&limit=5000`);
+  histChart.data.labels = rows.map(r => r.timestamp.slice(11,19));
+  histChart.data.datasets[0].label = m; histChart.data.datasets[0].data = rows.map(r => r[m]);
+  histChart.update();
+};
+$("thSave").onclick = async () => {
+  const r = await fetch("/api/thresholds", {method:"POST", headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({metric_type: $("thMetric").value, limit_value: parseFloat($("thLimit").value)})});
+  const j = await r.json();
+  $("thMsg").textContent = r.ok ? "Saved." : j.error;
+  refreshThresholds();
+};
+$("clear").onclick = async () => { await fetch("/api/alerts/clear", {method:"POST"}); refreshAlerts(); };
+
+async function tick() { await Promise.all([refreshNodes(), refreshAlerts(), refreshLive()]).catch(console.error); }
+refreshThresholds(); tick(); setInterval(tick, 1500);
+</script>
+</body>
+</html>
