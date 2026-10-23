@@ -85,6 +85,18 @@ def test_non_json_body(env):
     assert c.post("/api/metrics", data="not json").status_code == 400
 
 
+def test_api_key_required_for_writes(tmp_path):
+    # Deployed server: POSTs need the key, GETs (dashboard reads) stay open.
+    c = create_app(str(tmp_path / "k.db"), api_key="s3cret").test_client()
+    assert c.post("/api/register", json={"node_id": "NODE-01"}).status_code == 401
+    assert c.post("/api/register", json={"node_id": "NODE-01"},
+                  headers={"X-API-Key": "wrong"}).status_code == 401
+    ok = {"X-API-Key": "s3cret"}
+    assert c.post("/api/register", json={"node_id": "NODE-01"}, headers=ok).status_code == 201
+    assert c.post("/api/metrics", json=GOOD, headers=ok).status_code == 201
+    assert c.get("/api/nodes").status_code == 200
+
+
 def test_tc07_threshold_create_update(env):
     c, _ = env
     assert c.post("/api/thresholds", json={"metric_type": "cpu_usage", "limit_value": 80}).status_code == 200

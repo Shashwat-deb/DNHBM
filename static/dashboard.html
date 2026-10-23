@@ -61,6 +61,19 @@ const METRICS = ["cpu_usage","memory_usage","network_throughput","packet_loss","
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const get = async u => (await fetch(u)).json();
+// Writes need the API key when the server has one. Ask once, keep it for this tab, retry on 401.
+async function post(url, body) {
+  const send = () => fetch(url, {method: "POST", headers: {"Content-Type": "application/json",
+    "X-API-Key": sessionStorage.getItem("dnhbmKey") || ""}, body: body === undefined ? undefined : JSON.stringify(body)});
+  let r = await send();
+  if (r.status === 401) {
+    const k = prompt("API key for this server (leave empty if none):");
+    if (k === null) return r;
+    sessionStorage.setItem("dnhbmKey", k);
+    r = await send();
+  }
+  return r;
+}
 for (const id of ["histMetric","thMetric"]) $(id).innerHTML = METRICS.map(m => `<option>${m}</option>`).join("");
 
 function mkChart(el, datasets) {
@@ -114,13 +127,12 @@ $("viewTrends").onclick = async () => {
   histChart.update();
 };
 $("thSave").onclick = async () => {
-  const r = await fetch("/api/thresholds", {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({metric_type: $("thMetric").value, limit_value: parseFloat($("thLimit").value)})});
+  const r = await post("/api/thresholds", {metric_type: $("thMetric").value, limit_value: parseFloat($("thLimit").value)});
   const j = await r.json();
   $("thMsg").textContent = r.ok ? "Saved." : j.error;
   refreshThresholds();
 };
-$("clear").onclick = async () => { await fetch("/api/alerts/clear", {method:"POST"}); refreshAlerts(); };
+$("clear").onclick = async () => { await post("/api/alerts/clear"); refreshAlerts(); };
 
 async function tick() { await Promise.all([refreshNodes(), refreshAlerts(), refreshLive()]).catch(console.error); }
 refreshThresholds(); tick(); setInterval(tick, 1500);

@@ -1,0 +1,9 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+*.db
+*.db-wal
+*.db-shm
+*.log
+test_netmon.py

@@ -1,4 +1,5 @@
 """Central server: REST API + SQLite + dashboard host (FR-01, 05-13)."""
+import hmac
 import os
 import sqlite3
 import time
@@ -42,9 +43,19 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
 
 
-def create_app(db_path=None):
+def create_app(db_path=None, api_key=None):
     app = Flask(__name__)
-    app.config["DB_PATH"] = db_path or os.path.join(HERE, "monitor.db")
+    app.config["DB_PATH"] = db_path or os.environ.get("DB_PATH") or os.path.join(HERE, "monitor.db")
+    # When an API key is set, every POST must send it in the X-API-Key header.
+    # Unset (local demo, tests) means writes are open, as before.
+    app.config["API_KEY"] = api_key if api_key is not None else os.environ.get("DNHBM_API_KEY", "")
+
+    @app.before_request
+    def require_api_key():
+        key = app.config["API_KEY"]
+        if key and request.method == "POST" and not hmac.compare_digest(
+                request.headers.get("X-API-Key", ""), key):
+            return jsonify({"error": "missing or wrong X-API-Key"}), 401
 
     def db():
         if "db" not in g:
@@ -215,4 +226,6 @@ def create_app(db_path=None):
 
 
 if __name__ == "__main__":
-    create_app().run(host="127.0.0.1", port=5000, threaded=True)
+    # Local default is 127.0.0.1:5000. On a host (Render, Docker, LAN) set HOST=0.0.0.0 and PORT.
+    create_app().run(host=os.environ.get("HOST", "127.0.0.1"),
+                     port=int(os.environ.get("PORT", 5000)), threaded=True)

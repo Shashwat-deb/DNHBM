@@ -1,5 +1,6 @@
 """Telemetry agent: collect metrics and push them to the server (FR-01..04)."""
 import json
+import os
 import platform
 import socket
 import sys
@@ -8,7 +9,7 @@ import time
 import psutil
 import requests
 
-DEFAULTS = {"node_id": None, "server": "http://127.0.0.1:5000", "interval": 5}
+DEFAULTS = {"node_id": None, "server": "http://127.0.0.1:5000", "interval": 5, "api_key": ""}
 
 
 def load_config(path="config.json"):
@@ -18,6 +19,8 @@ def load_config(path="config.json"):
             cfg.update(json.load(f))
     except FileNotFoundError:
         pass
+    # DNHBM_API_KEY env var wins over config.json, so the key need not live in a file.
+    cfg["api_key"] = os.environ.get("DNHBM_API_KEY") or cfg["api_key"]
     cfg["node_id"] = cfg["node_id"] or socket.gethostname()
     if not isinstance(cfg["interval"], (int, float)) or cfg["interval"] <= 0:
         cfg["interval"] = DEFAULTS["interval"]
@@ -55,8 +58,12 @@ class Collector:
         }
 
 
+def auth_headers(cfg):
+    return {"X-API-Key": cfg["api_key"]} if cfg["api_key"] else {}
+
+
 def register(cfg):
-    r = requests.post(cfg["server"] + "/api/register", timeout=5, json={
+    r = requests.post(cfg["server"] + "/api/register", timeout=5, headers=auth_headers(cfg), json={
         "node_id": cfg["node_id"], "hostname": socket.gethostname(),
         "os": f"{platform.system()} {platform.release()}", "interval": cfg["interval"]})
     r.raise_for_status()
@@ -73,7 +80,8 @@ def run(config_path="config.json"):
                 register(cfg)
                 registered = True
             payload = {"node_id": cfg["node_id"], **collector.sample()}   # Sampling
-            r = requests.post(cfg["server"] + "/api/metrics", json=payload, timeout=5)  # Transmitting
+            r = requests.post(cfg["server"] + "/api/metrics", json=payload,
+                              headers=auth_headers(cfg), timeout=5)  # Transmitting
             if r.status_code == 404:            # server lost us; re-register
                 registered = False
         except requests.RequestException as e:
