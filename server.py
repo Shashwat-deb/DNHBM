@@ -1,11 +1,13 @@
 """Central server: REST API + SQLite + dashboard host (FR-01, 05-13)."""
+import csv
 import hmac
+import io
 import os
 import sqlite3
 import time
 from datetime import datetime, timezone
 
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, Response, g, jsonify, request, send_from_directory
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 METRIC_FIELDS = ["cpu_usage", "memory_usage", "network_throughput",
@@ -181,9 +183,33 @@ def create_app(db_path=None, api_key=None):
     # ---- FR-12: alerts ----
     @app.get("/api/alerts")
     def alerts():
+        # Alerts are never deleted by the server. ?minutes=30 returns only alerts from the
+        # last 30 minutes; without it, the newest ?limit alerts are returned.
         limit = min(int(request.args.get("limit", 100)), 1000)
-        rows = db().execute("SELECT * FROM alerts ORDER BY alert_id DESC LIMIT ?", (limit,))
-        return jsonify([dict(r) for r in rows])
+        sql, args = "SELECT * FROM alerts", []
+        if request.args.get("minutes") is not None:
+            try:
+                minutes = float(request.args["minutes"])
+            except ValueError:
+                return err("minutes must be a number")
+            since = datetime.fromtimestamp(time.time() - minutes * 60, timezone.utc)
+            sql += " WHERE timestamp >= ?"
+            args.append(since.isoformat(timespec="milliseconds"))
+        sql += " ORDER BY alert_id DESC LIMIT ?"
+        args.append(limit)
+        return jsonify([dict(r) for r in db().execute(sql, args)])
+
+    @app.get("/api/alerts/export")
+    def export_alerts():
+        # Full alert history as CSV, so it can be saved on your PC and looked at later.
+        rows = db().execute("SELECT alert_id, node_id, threshold_id, timestamp, is_active, message "
+                            "FROM alerts ORDER BY alert_id").fetchall()
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["alert_id", "node_id", "threshold_id", "timestamp", "is_active", "message"])
+        w.writerows(tuple(r) for r in rows)
+        return Response(buf.getvalue(), mimetype="text/csv",
+                        headers={"Content-Disposition": "attachment; filename=alerts.csv"})
 
     @app.post("/api/alerts/clear")
     def clear_alerts():

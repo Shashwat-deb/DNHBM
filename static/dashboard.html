@@ -31,6 +31,7 @@
     <h2>Alert notifications (FR-12)</h2>
     <div id="alerts"></div>
     <button id="clear">Clear alerts</button>
+    <a href="/api/alerts/export" download>Download all alerts (CSV)</a>
   </section>
   <section class="full">
     <h2>Live metrics (FR-09)</h2>
@@ -100,7 +101,8 @@ async function refreshNodes() {
   if ($("liveNode").options.length !== nodes.length) fillNodeSelects(nodes);
 }
 async function refreshAlerts() {
-  const a = (await get("/api/alerts?limit=30")).filter(x => x.is_active);
+  // Show every active alert from the last 30 minutes (the server keeps them; nothing is deleted).
+  const a = (await get("/api/alerts?minutes=30&limit=1000")).filter(x => x.is_active);
   $("alerts").innerHTML = a.length ? a.map(x => `<div class="alert">${esc(x.timestamp.slice(11,19))} — ${esc(x.message)}</div>`).join("") : "No active alerts.";
 }
 async function refreshLive() {

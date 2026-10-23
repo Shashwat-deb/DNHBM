@@ -121,6 +121,30 @@ def test_tc08_alert_on_breach(env):
     assert len(a) == 1 and a[0]["node_id"] == "NODE-01" and a[0]["is_active"] == 1
 
 
+def test_alerts_kept_and_filtered_by_minutes(env):
+    c, path = env
+    c.post("/api/thresholds", json={"metric_type": "cpu_usage", "limit_value": 50})
+    c.post("/api/metrics", json={**GOOD, "cpu_usage": 92.0})
+    old = (datetime.now(timezone.utc) - timedelta(minutes=45)).isoformat(timespec="milliseconds")
+    with sqlite3.connect(path) as d:
+        d.execute("INSERT INTO alerts (node_id,threshold_id,message,timestamp) "
+                  "VALUES ('NODE-01',1,'old alert',?)", (old,))
+    assert len(c.get("/api/alerts?minutes=30").get_json()) == 1   # only the fresh one
+    assert len(c.get("/api/alerts").get_json()) == 2              # nothing deleted
+    assert c.get("/api/alerts?minutes=abc").status_code == 400
+
+
+def test_alert_history_export_csv(env):
+    c, path = env
+    c.post("/api/thresholds", json={"metric_type": "cpu_usage", "limit_value": 50})
+    c.post("/api/metrics", json={**GOOD, "cpu_usage": 92.0})
+    r = c.get("/api/alerts/export")
+    assert r.status_code == 200 and r.mimetype == "text/csv"
+    lines = r.get_data(as_text=True).strip().splitlines()
+    assert lines[0] == "alert_id,node_id,threshold_id,timestamp,is_active,message"
+    assert len(lines) == 2 and "NODE-01" in lines[1] and "cpu_usage 92.0" in lines[1]
+
+
 def test_tc09_no_alert_below_threshold(env):
     c, _ = env
     c.post("/api/thresholds", json={"metric_type": "cpu_usage", "limit_value": 80})
