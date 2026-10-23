@@ -1,6 +1,9 @@
 {
   "node_id": "NODE-01",
-  "server": "http://127.0.0.1:5000",
+  "server": "https://dnhbm.onrender.com",
   "interval": 5,
-  "api_key": ""
+  "api_key": "",
+  "log_file": "agent.log",
+  "metrics_log": "metrics.log",
+  "offline_queue": "offline_queue.jsonl"
 }

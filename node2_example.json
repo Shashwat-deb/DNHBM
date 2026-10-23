@@ -1,0 +1,8 @@
+{
+  "node_id": "NODE-02",
+  "server": "https://dnhbm.onrender.com",
+  "interval": 5,
+  "log_file": "agent_NODE-02.log",
+  "metrics_log": "metrics_NODE-02.log",
+  "offline_queue": "offline_queue_NODE-02.jsonl"
+}

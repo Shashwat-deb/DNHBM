@@ -195,3 +195,181 @@ def test_tc13_concurrent_ingestion(tmp_path):
     assert errors == []
     assert rows(path, "SELECT COUNT(*) FROM metrics") == [(n_nodes * per_node,)]
     assert rows(path, "SELECT COUNT(*) FROM nodes") == [(n_nodes,)]
+
+
+def test_batch_metrics_ingestion(env):
+    c, path = env
+    batch = [
+        {**GOOD, "timestamp": "2026-10-23T10:00:00.000Z", "cpu_usage": 10.0},
+        {**GOOD, "timestamp": "2026-10-23T10:00:05.000Z", "cpu_usage": 20.0},
+        {**GOOD, "timestamp": "2026-10-23T10:00:10.000Z", "cpu_usage": 30.0},
+    ]
+    r = c.post("/api/metrics", json=batch)
+    assert r.status_code == 201
+    assert r.get_json()["count"] == 3
+    assert rows(path, "SELECT COUNT(*) FROM metrics") == [(3,)]
+
+
+def test_offline_log_timestamp_preservation(env):
+    c, path = env
+    offline_ts = "2026-10-23T08:15:30.123Z"
+    r = c.post("/api/metrics", json={**GOOD, "timestamp": offline_ts})
+    assert r.status_code == 201
+    assert rows(path, "SELECT timestamp FROM metrics") == [(offline_ts,)]
+
+
+def test_agent_offline_local_logging_and_queue(tmp_path):
+    import json
+    import os
+    from agent import append_offline_log, load_offline_queue, clear_offline_queue, log_metric_locally
+    queue_file = str(tmp_path / "offline_queue.jsonl")
+    log_file = str(tmp_path / "metrics.log")
+
+    sample1 = {**GOOD, "timestamp": "2026-10-23T09:00:00.000Z"}
+    sample2 = {**GOOD, "timestamp": "2026-10-23T09:00:05.000Z"}
+
+    # 1. Test local metrics file logging
+    log_metric_locally(log_file, sample1)
+    log_metric_locally(log_file, sample2)
+    with open(log_file) as f:
+        lines = [json.loads(line) for line in f if line.strip()]
+    assert len(lines) == 2
+    assert lines[0]["timestamp"] == "2026-10-23T09:00:00.000Z"
+
+    # 2. Test offline queue buffering
+    append_offline_log(queue_file, sample1)
+    append_offline_log(queue_file, sample2)
+    queue = load_offline_queue(queue_file)
+    assert len(queue) == 2
+    assert queue[1]["timestamp"] == "2026-10-23T09:00:05.000Z"
+
+    clear_offline_queue(queue_file)
+    assert not os.path.exists(queue_file)
+
+
+def test_offline_flush_with_server(tmp_path, monkeypatch):
+    import os
+    from agent import append_offline_log, flush_offline_queue
+    path = str(tmp_path / "t.db")
+    app = create_app(path)
+    client = app.test_client()
+    client.post("/api/register", json={"node_id": "NODE-01"})
+
+    queue_file = str(tmp_path / "offline_queue.jsonl")
+    payload1 = {**GOOD, "timestamp": "2026-10-23T09:00:00.000Z"}
+    payload2 = {**GOOD, "timestamp": "2026-10-23T09:00:05.000Z"}
+    append_offline_log(queue_file, payload1)
+    append_offline_log(queue_file, payload2)
+
+    class MockResponse:
+        def __init__(self, status_code, json_data):
+            self.status_code = status_code
+            self._json = json_data
+
+        def json(self):
+            return self._json
+
+    def mock_post(url, json=None, timeout=None, headers=None, **kwargs):
+        endpoint = url.split("http://testserver")[-1]
+        res = client.post(endpoint, json=json, headers=headers)
+        return MockResponse(res.status_code, res.get_json())
+
+    monkeypatch.setattr("agent.requests.post", mock_post)
+
+    cfg = {"node_id": "NODE-01", "server": "http://testserver", "offline_queue": queue_file}
+    flushed = flush_offline_queue(cfg)
+    assert flushed == 2
+    assert rows(path, "SELECT COUNT(*) FROM metrics") == [(2,)]
+    assert not os.path.exists(queue_file)
+
+
+def test_logs_export_csv_and_json(env):
+    c, _ = env
+    c.post("/api/thresholds", json={"metric_type": "cpu_usage", "limit_value": 30})
+    c.post("/api/metrics", json={**GOOD, "cpu_usage": 75.0})
+
+    # Test CSV export with breach marker on breached field only
+    r_csv = c.get("/api/logs/export?format=csv")
+    assert r_csv.status_code == 200
+    assert r_csv.mimetype == "text/csv"
+    csv_text = r_csv.get_data(as_text=True)
+    assert "NODE-01" in csv_text
+    assert "75.0 [ALERT]" in csv_text  # breached value marked
+
+    # Test JSON export
+    r_json = c.get("/api/logs/export?format=json")
+    assert r_json.status_code == 200
+    assert r_json.mimetype == "application/json"
+    data = r_json.get_json()
+    assert len(data) == 1
+    assert data[0]["node_id"] == "NODE-01"
+
+    # Test HTML export with threshold breach highlighting
+    r_html = c.get("/api/logs/export?format=html")
+    assert r_html.status_code == 200
+    assert r_html.mimetype == "text/html"
+    html_text = r_html.get_data(as_text=True)
+    assert "NODE-01" in html_text
+    assert "color:#cf222e" in html_text  # only breached value highlighted in red
+    assert "75.0" in html_text
+
+    # Test Excel (.xlsx) export with native red fill and font on breached cell only
+    r_xlsx = c.get("/api/logs/export?format=xlsx")
+    assert r_xlsx.status_code == 200
+    assert r_xlsx.mimetype == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    import io, openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(r_xlsx.data))
+    ws = wb.active
+    cpu_cell = ws.cell(row=2, column=3)  # CPU % (breached)
+    mem_cell = ws.cell(row=2, column=4)  # Memory % (normal)
+    assert cpu_cell.fill.start_color.rgb == "00FFEBE9" or cpu_cell.fill.start_color.value == "FFEBE9"
+    assert cpu_cell.font.color.rgb == "00CF222E" or cpu_cell.font.color.value == "CF222E"
+    assert mem_cell.fill.fill_type is None  # memory cell is normal
+
+
+def test_logs_query_api(env):
+    c, _ = env
+    c.post("/api/metrics", json=GOOD)
+    r = c.get("/api/logs")
+    assert r.status_code == 200
+    logs = r.get_json()["metrics"]
+    assert len(logs) == 1
+    assert logs[0]["node_id"] == "NODE-01"
+
+
+def test_dashboard_offline_assets(env):
+    c, _ = env
+    r = c.get("/static/chart.umd.min.js")
+    assert r.status_code == 200
+    assert len(r.data) > 50000
+    assert b"Chart" in r.data
+
+
+def test_agent_load_config_and_node_isolation(tmp_path, monkeypatch):
+    from agent import load_config
+    cfg_file = tmp_path / "custom_node.json"
+    cfg_file.write_text('{"node_id": "NODE-99", "server": "https://example.com", "interval": 10}')
+
+    # 1. Load from file
+    cfg1 = load_config(str(cfg_file))
+    assert cfg1["node_id"] == "NODE-99"
+    assert cfg1["server"] == "https://example.com"
+    assert cfg1["interval"] == 10
+    assert cfg1["log_file"] == "agent_NODE-99.log"
+    assert cfg1["metrics_log"] == "metrics_NODE-99.log"
+    assert cfg1["offline_queue"] == "offline_queue_NODE-99.jsonl"
+
+    # 2. Load directly with node_id string
+    cfg2 = load_config("NODE-CLI-02")
+    assert cfg2["node_id"] == "NODE-CLI-02"
+    assert cfg2["log_file"] == "agent_NODE-CLI-02.log"
+
+    # 3. Environment variable override
+    monkeypatch.setenv("NETMON_NODE_ID", "NODE-ENV")
+    monkeypatch.setenv("NETMON_SERVER", "https://dnhbm.onrender.com")
+    monkeypatch.setenv("NETMON_INTERVAL", "3")
+    cfg3 = load_config()
+    assert cfg3["node_id"] == "NODE-ENV"
+    assert cfg3["server"] == "https://dnhbm.onrender.com"
+    assert cfg3["interval"] == 3
+

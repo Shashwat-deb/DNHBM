@@ -3,58 +3,182 @@
 <head>
 <meta charset="utf-8">
 <title>Network Health &amp; Bandwidth Monitor</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="/static/chart.umd.min.js"></script>
+<script>
+  if (typeof Chart === "undefined") {
+    document.write('<script src="https://cdn.jsdelivr.net/npm/chart.js@4"><\/script>');
+  }
+</script>
 <style>
   body { font-family: system-ui, sans-serif; margin: 0; background: #f4f5f7; color: #222; }
-  header { background: #1f2d3d; color: #fff; padding: 12px 20px; }
-  main { padding: 16px 20px; display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
-  section { background: #fff; border-radius: 6px; padding: 12px 16px; box-shadow: 0 1px 3px #0002; }
-  h2 { margin: 0 0 8px; font-size: 1rem; }
+  header { background: #1f2d3d; color: #fff; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; }
+  .badge { background: #1a7f37; color: #fff; padding: 3px 8px; border-radius: 12px; font-size: 0.75rem; font-weight: 600; }
+  main {
+    padding: 16px 20px;
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  @media (max-width: 1050px) {
+    main {
+      grid-template-columns: 1fr;
+    }
+  }
+  section {
+    background: #fff;
+    border-radius: 6px;
+    padding: 14px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  h2 { margin: 0 0 10px; font-size: 1rem; color: #1f2d3d; }
   table { width: 100%; border-collapse: collapse; font-size: .9rem; }
-  td, th { text-align: left; padding: 4px 6px; border-bottom: 1px solid #eee; }
-  .online { color: #1a7f37; font-weight: 600; } .offline { color: #cf222e; font-weight: 600; }
+  td, th { text-align: left; padding: 5px 8px; border-bottom: 1px solid #eee; }
+  .online { color: #1a7f37; font-weight: 600; }
+  .offline { color: #cf222e; font-weight: 600; }
   .registered { color: #9a6700; font-weight: 600; }
-  .alert { background: #fff1f0; border-left: 4px solid #cf222e; padding: 4px 8px; margin: 4px 0; font-size: .85rem; }
-  .full { grid-column: 1 / -1; } label { margin-right: 8px; } .msg { font-size: .85rem; margin-left: 8px; }
-  .cur { display: flex; gap: 14px; flex-wrap: wrap; } .cur div { min-width: 90px; }
-  .cur b { display: block; font-size: 1.3rem; }
+  .alert { background: #fff1f0; border-left: 4px solid #cf222e; padding: 6px 10px; margin: 4px 0; font-size: .85rem; border-radius: 2px; }
+  .full { grid-column: 1 / -1; }
+  label { margin-right: 10px; font-size: .9rem; font-weight: 500; }
+  select, input[type="number"] { padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: .9rem; }
+  .msg { font-size: .85rem; margin-left: 8px; }
+  .cur { display: flex; gap: 18px; flex-wrap: wrap; margin: 8px 0; }
+  .cur div { min-width: 90px; }
+  .cur b { display: block; font-size: 1.3rem; color: #1f2d3d; }
+  .btn { display: inline-block; padding: 6px 14px; font-size: .85rem; text-decoration: none; background: #0969da; color: #fff; border-radius: 4px; border: none; cursor: pointer; font-weight: 500; }
+  .btn:hover { background: #0856b3; }
+  .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .btn-secondary { background: #57606a; }
+  .btn-secondary:hover { background: #424a53; }
+  .card-scroll { max-height: 220px; overflow-y: auto; }
+  .card-scroll::-webkit-scrollbar, #alertsBox::-webkit-scrollbar, .table-scroll::-webkit-scrollbar { width: 6px; }
+  .card-scroll::-webkit-scrollbar-track, #alertsBox::-webkit-scrollbar-track, .table-scroll::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 3px; }
+  .card-scroll::-webkit-scrollbar-thumb, .table-scroll::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+  #alertsBox {
+    max-height: 200px;
+    min-height: 120px;
+    overflow-y: auto;
+    border: 1px solid #f0d0d0;
+    background: #fffafa;
+    border-radius: 4px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+  }
+  #alertsBox::-webkit-scrollbar-thumb { background: #e09999; border-radius: 3px; }
+  .controls-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+  .chart-wrapper {
+    position: relative;
+    height: 280px;
+    width: 100%;
+    margin-top: 8px;
+  }
+  .table-scroll { max-height: 260px; overflow-y: auto; margin-top: 10px; }
+  .breach-cell {
+    background: #fff5f5 !important;
+  }
+  .breach-val {
+    color: #cf222e;
+    font-weight: 700;
+    background: #ffebe9;
+    border: 1px solid #ffc1ba;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-block;
+  }
 </style>
 </head>
 <body>
-<header><h1 style="margin:0;font-size:1.2rem">Distributed Network Health &amp; Bandwidth Monitor</h1></header>
+<header>
+  <h1 style="margin:0;font-size:1.2rem">Distributed Network Health &amp; Bandwidth Monitor</h1>
+  <span class="badge" title="Dashboard assets and Chart.js are bundled locally for offline use">Offline-Ready</span>
+</header>
 <main>
+  <!-- Top Left: Node Status -->
   <section>
     <h2>Node status (FR-11)</h2>
-    <table id="nodes"><thead><tr><th>Node</th><th>Host</th><th>OS</th><th>Status</th><th>Last seen</th></tr></thead><tbody></tbody></table>
+    <div class="card-scroll">
+      <table id="nodes"><thead><tr><th>Node</th><th>Host</th><th>OS</th><th>Status</th><th>Last seen</th></tr></thead><tbody></tbody></table>
+    </div>
   </section>
+
+  <!-- Top Middle: Alert Notifications with Scroll Bar -->
   <section>
     <h2>Alert notifications (FR-12)</h2>
-    <div id="alerts"></div>
-    <button id="clear">Clear alerts</button>
-    <a href="/api/alerts/export" download>Download all alerts (CSV)</a>
+    <div id="alertsBox">
+      <div id="alerts">No active alerts.</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;margin-top:6px">
+      <button class="btn btn-secondary" id="clear">Clear alerts</button>
+      <a href="/api/alerts/export" download class="btn btn-secondary" style="text-decoration:none;font-size:12px;padding:6px 12px;display:inline-block">Download all alerts (CSV)</a>
+    </div>
   </section>
-  <section class="full">
-    <h2>Live metrics (FR-09)</h2>
-    <label>Node <select id="liveNode"></select></label>
-    <div class="cur" id="cur"></div>
-    <canvas id="liveChart" height="70"></canvas>
-  </section>
-  <section class="full">
-    <h2>Historical trends (FR-10)</h2>
-    <label>Node <select id="histNode"></select></label>
-    <label>Range <select id="range">
-      <option value="5">Last 5 min</option><option value="15">Last 15 min</option>
-      <option value="60" selected>Last 1 hour</option><option value="1440">Last 24 hours</option></select></label>
-    <label>Metric <select id="histMetric"></select></label>
-    <button id="viewTrends">View Trends</button>
-    <canvas id="histChart" height="70"></canvas>
-  </section>
+
+  <!-- Top Right: Threshold Configuration (moved next to alerts) -->
   <section>
     <h2>Threshold configuration (FR-13)</h2>
-    <label>Metric <select id="thMetric"></select></label>
-    <label>Limit <input id="thLimit" type="number" step="any" min="0" style="width:80px"></label>
-    <button id="thSave">Save</button><span class="msg" id="thMsg"></span>
-    <table id="thresholds"><thead><tr><th>Metric</th><th>Limit</th></tr></thead><tbody></tbody></table>
+    <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+      <label>Metric <select id="thMetric"></select></label>
+      <label>Limit <input id="thLimit" type="number" step="any" min="0" style="width:70px"></label>
+      <button class="btn" id="thSave">Save</button>
+      <span class="msg" id="thMsg"></span>
+    </div>
+    <div class="card-scroll" style="max-height:165px">
+      <table id="thresholds"><thead><tr><th>Metric</th><th>Limit</th></tr></thead><tbody></tbody></table>
+    </div>
+  </section>
+
+  <!-- Full width: Live Metrics -->
+  <section class="full">
+    <h2>Live metrics (FR-09)</h2>
+    <div class="controls-row">
+      <label>Node <select id="liveNode"></select></label>
+    </div>
+    <div class="cur" id="cur"></div>
+    <div class="chart-wrapper">
+      <canvas id="liveChart"></canvas>
+    </div>
+  </section>
+
+  <!-- Full width: Historical Trends -->
+  <section class="full">
+    <h2>Historical trends (FR-10)</h2>
+    <div class="controls-row">
+      <label>Node <select id="histNode"></select></label>
+      <label>Range <select id="range">
+        <option value="5">Last 5 min</option><option value="15">Last 15 min</option>
+        <option value="60" selected>Last 1 hour</option><option value="1440">Last 24 hours</option></select></label>
+      <label>Metric <select id="histMetric"></select></label>
+      <button class="btn" id="viewTrends">View Trends</button>
+    </div>
+    <div class="chart-wrapper">
+      <canvas id="histChart"></canvas>
+    </div>
+  </section>
+
+  <!-- Full width: Offline Telemetry Logs & Export -->
+  <section class="full">
+    <h2>Offline Telemetry Logs &amp; Export</h2>
+    <div class="controls-row">
+      <button class="btn" id="dlExcel" onclick="downloadLogs('excel')">Download Logs (Excel)</button>
+      <button class="btn" id="dlCsv" onclick="downloadLogs('csv')">Download Logs (CSV)</button>
+      <button class="btn" id="dlHtml" onclick="downloadLogs('html')">Download Logs (HTML)</button>
+      <button class="btn" id="dlJson" onclick="downloadLogs('json')">Download Logs (JSON)</button>
+      <label style="margin-left:auto">Filter by Node: <select id="logNode"><option value="">All Nodes</option></select></label>
+      <button class="btn btn-secondary" id="refreshLogs">Refresh Logs</button>
+    </div>
+    <div class="table-scroll">
+      <table id="logsTable">
+        <thead>
+          <tr><th>Timestamp</th><th>Node</th><th>CPU %</th><th>Memory %</th><th>Throughput (Mbps)</th><th>Packet Loss %</th><th>Connections</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 </main>
 <script>
@@ -77,14 +201,31 @@ async function post(url, body) {
 }
 for (const id of ["histMetric","thMetric"]) $(id).innerHTML = METRICS.map(m => `<option>${m}</option>`).join("");
 
+let currentThresholds = {};
+
 function mkChart(el, datasets) {
-  return new Chart(el, { type: "line", data: { labels: [], datasets },
-    options: { animation: false, scales: { x: { ticks: { maxTicksLimit: 8 } } } } });
+  return new Chart(el, {
+    type: "line",
+    data: { labels: [], datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      scales: {
+        x: { ticks: { maxTicksLimit: 12 } },
+        y: { beginAtZero: true }
+      }
+    }
+  });
 }
 const liveChart = mkChart($("liveChart"), [
-  {label:"CPU %", data:[], borderColor:"#cf222e"}, {label:"Memory %", data:[], borderColor:"#0969da"},
-  {label:"Throughput Mbps", data:[], borderColor:"#1a7f37"}]);
-const histChart = mkChart($("histChart"), [{label:"", data:[], borderColor:"#8250df"}]);
+  {label:"CPU %", data:[], borderColor:"#cf222e", tension: 0.2},
+  {label:"Memory %", data:[], borderColor:"#0969da", tension: 0.2},
+  {label:"Throughput Mbps", data:[], borderColor:"#1a7f37", tension: 0.2}
+]);
+const histChart = mkChart($("histChart"), [
+  {label:"", data:[], borderColor:"#8250df", tension: 0.2}
+]);
 
 function fillNodeSelects(nodes) {
   for (const id of ["liveNode","histNode"]) {
@@ -92,6 +233,9 @@ function fillNodeSelects(nodes) {
     sel.innerHTML = nodes.map(n => `<option>${esc(n.node_id)}</option>`).join("");
     if (cur) sel.value = cur;
   }
+  const logSel = $("logNode"), logCur = logSel.value;
+  logSel.innerHTML = `<option value="">All Nodes</option>` + nodes.map(n => `<option>${esc(n.node_id)}</option>`).join("");
+  if (logCur) logSel.value = logCur;
 }
 async function refreshNodes() {
   const nodes = await get("/api/nodes");
@@ -117,8 +261,54 @@ async function refreshLive() {
   $("cur").innerHTML = l ? [["CPU",l.cpu_usage+" %"],["Memory",l.memory_usage+" %"],["Throughput",l.network_throughput+" Mbps"],
     ["Packet loss",l.packet_loss+" %"],["Connections",l.connection_count]].map(([k,v]) => `<div>${k}<b>${v}</b></div>`).join("") : "No data yet.";
 }
+
+function formatCell(val, metricType) {
+  if (val == null) return "—";
+  const num = Number(val);
+  const limit = currentThresholds[metricType];
+  if (limit !== undefined && !isNaN(num) && num > limit) {
+    return `<td class="breach-cell" title="Exceeds ${metricType} limit of ${limit}"><span class="breach-val">${esc(val)}</span></td>`;
+  }
+  return `<td>${esc(val)}</td>`;
+}
+
+async function refreshLogs() {
+  if (Object.keys(currentThresholds).length === 0) {
+    await refreshThresholds();
+  }
+  let rows = [];
+  try {
+    const node = $("logNode") ? $("logNode").value : "";
+    const res = await fetch(node ? `/api/logs?node_id=${encodeURIComponent(node)}&limit=50` : `/api/logs?limit=50`);
+    if (res.ok) {
+      const data = await res.json();
+      rows = data.metrics || [];
+    } else {
+      rows = await get(node ? `/api/metrics?node_id=${encodeURIComponent(node)}&minutes=60&limit=50` : `/api/metrics?minutes=60&limit=50`);
+    }
+  } catch (e) {
+    try {
+      rows = await get(`/api/metrics?minutes=60&limit=50`);
+    } catch (_) {}
+  }
+  $("logsTable").tBodies[0].innerHTML = rows && rows.length ? rows.map(r =>
+    `<tr>
+      <td>${esc(r.timestamp)}</td>
+      <td>${esc(r.node_id)}</td>
+      ${formatCell(r.cpu_usage, "cpu_usage")}
+      ${formatCell(r.memory_usage, "memory_usage")}
+      ${formatCell(r.network_throughput, "network_throughput")}
+      ${formatCell(r.packet_loss, "packet_loss")}
+      ${formatCell(r.connection_count, "connection_count")}
+    </tr>`).join("") :
+    `<tr><td colspan="7" style="text-align:center;color:#666">No logs stored yet.</td></tr>`;
+}
 async function refreshThresholds() {
   const t = await get("/api/thresholds");
+  currentThresholds = {};
+  for (const item of t) {
+    currentThresholds[item.metric_type] = item.limit_value;
+  }
   $("thresholds").tBodies[0].innerHTML = t.map(x => `<tr><td>${esc(x.metric_type)}</td><td>${esc(x.limit_value)}</td></tr>`).join("");
 }
 $("viewTrends").onclick = async () => {
@@ -132,12 +322,174 @@ $("thSave").onclick = async () => {
   const r = await post("/api/thresholds", {metric_type: $("thMetric").value, limit_value: parseFloat($("thLimit").value)});
   const j = await r.json();
   $("thMsg").textContent = r.ok ? "Saved." : j.error;
-  refreshThresholds();
+  await refreshThresholds();
+  refreshLogs();
 };
 $("clear").onclick = async () => { await post("/api/alerts/clear"); refreshAlerts(); };
+$("refreshLogs").onclick = refreshLogs;
+$("logNode").onchange = refreshLogs;
+
+function triggerDownload(blob, filename) {
+  const url = window.URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.style.display = "none";
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  }, 500);
+}
+
+async function downloadLogs(format) {
+  const btn = $(format === "excel" ? "dlExcel" : (format === "csv" ? "dlCsv" : (format === "html" ? "dlHtml" : "dlJson")));
+  const origText = btn.textContent;
+  btn.textContent = "Downloading...";
+  btn.disabled = true;
+  const node = $("logNode") ? $("logNode").value : "";
+  const serverFmt = format === "excel" ? "xlsx" : format;
+  const ext = format === "excel" ? "xlsx" : format;
+
+  try {
+    const url = `/api/logs/export?format=${serverFmt}${node ? `&node_id=${encodeURIComponent(node)}` : ""}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const blob = await res.blob();
+      triggerDownload(blob, `metrics_logs.${ext}`);
+      return;
+    }
+  } catch (err) {
+    console.warn("Server export route failed, trying client fallback:", err);
+  } finally {
+    btn.textContent = origText;
+    btn.disabled = false;
+  }
+
+  try {
+    const url = node ? `/api/metrics?node_id=${encodeURIComponent(node)}&minutes=1440&limit=10000` : `/api/metrics?minutes=1440&limit=10000`;
+    const rows = await get(url);
+    if (!rows || !rows.length) {
+      alert("No metrics logs available to download.");
+      return;
+    }
+    let blob, downloadName = `metrics_logs.${ext}`;
+    if (format === "json") {
+      blob = new Blob([JSON.stringify(rows, null, 2)], { type: "application/json" });
+    } else if (format === "excel") {
+      downloadName = "metrics_logs.xlsx";
+      const xmlRows = rows.map(r => {
+        const cells = [
+          `<Cell><Data ss:Type="String">${esc(r.timestamp)}</Data></Cell>`,
+          `<Cell><Data ss:Type="String">${esc(r.node_id)}</Data></Cell>`
+        ];
+        for (const m of METRICS) {
+          const val = r[m];
+          const lim = currentThresholds[m];
+          if (lim !== undefined && val !== null && !isNaN(val) && Number(val) > lim) {
+            cells.push(`<Cell ss:StyleID="Breach"><Data ss:Type="Number">${val}</Data></Cell>`);
+          } else {
+            cells.push(`<Cell><Data ss:Type="Number">${val ?? 0}</Data></Cell>`);
+          }
+        }
+        return `<Row>${cells.join("")}</Row>`;
+      }).join("\n");
+
+      const xmlDoc = `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Styles>
+  <Style ss:ID="Header">
+   <Font ss:Bold="1" ss:Color="#1F2D3D"/>
+   <Interior ss:Color="#F6F8FA" ss:Pattern="Solid"/>
+  </Style>
+  <Style ss:ID="Breach">
+   <Font ss:Bold="1" ss:Color="#CF222E"/>
+   <Interior ss:Color="#FFEBE9" ss:Pattern="Solid"/>
+  </Style>
+ </Styles>
+ <Worksheet ss:Name="Telemetry Logs">
+  <Table>
+   <Row ss:StyleID="Header">
+    <Cell><Data ss:Type="String">Timestamp</Data></Cell>
+    <Cell><Data ss:Type="String">Node ID</Data></Cell>
+    <Cell><Data ss:Type="String">CPU %</Data></Cell>
+    <Cell><Data ss:Type="String">Memory %</Data></Cell>
+    <Cell><Data ss:Type="String">Throughput (Mbps)</Data></Cell>
+    <Cell><Data ss:Type="String">Packet Loss %</Data></Cell>
+    <Cell><Data ss:Type="String">Connections</Data></Cell>
+   </Row>
+   ${xmlRows}
+  </Table>
+ </Worksheet>
+</Workbook>`;
+      blob = new Blob([xmlDoc], { type: "application/vnd.ms-excel" });
+    } else if (format === "html") {
+      const htmlRows = rows.map(r => {
+        const cells = [
+          `<td>${esc(r.timestamp)}</td>`,
+          `<td>${esc(r.node_id)}</td>`
+        ];
+        for (const m of METRICS) {
+          const val = r[m];
+          const lim = currentThresholds[m];
+          if (lim !== undefined && val !== null && !isNaN(val) && Number(val) > lim) {
+            cells.push(`<td style="color:#cf222e;font-weight:bold;background:#ffebe9;">${esc(val)}</td>`);
+          } else {
+            cells.push(`<td>${esc(val ?? "")}</td>`);
+          }
+        }
+        return `<tr>${cells.join("")}</tr>`;
+      }).join("\n");
+
+      const doc = `<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Exported Telemetry Logs</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 20px; background: #fafafa; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; }
+  th, td { border: 1px solid #e1e4e8; padding: 6px 10px; text-align: left; }
+  th { background: #f6f8fa; font-weight: 600; }
+</style>
+</head>
+<body>
+<h2>Exported Telemetry Logs</h2>
+<table>
+<thead><tr><th>Timestamp</th><th>Node</th><th>CPU %</th><th>Memory %</th><th>Throughput (Mbps)</th><th>Packet Loss %</th><th>Connections</th></tr></thead>
+<tbody>
+${htmlRows}
+</tbody>
+</table>
+</body></html>`;
+      blob = new Blob([doc], { type: "text/html;charset=utf-8;" });
+    } else {
+      // CSV format: append [ALERT] to the breached metric value
+      const headers = ["timestamp", "node_id", "cpu_usage", "memory_usage", "network_throughput", "packet_loss", "connection_count"];
+      const lines = [headers.join(",")];
+      for (const r of rows) {
+        lines.push(headers.map(h => {
+          let val = r[h] ?? "";
+          const lim = currentThresholds[h];
+          if (lim !== undefined && val !== "" && !isNaN(val) && Number(val) > lim) {
+            val = `${val} [ALERT]`;
+          }
+          return typeof val === "string" ? `"${val.replace(/"/g, '""')}"` : val;
+        }).join(","));
+      }
+      blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+    }
+    triggerDownload(blob, downloadName);
+  } catch (err) {
+    alert("Download failed: " + err.message);
+  }
+}
 
 async function tick() { await Promise.all([refreshNodes(), refreshAlerts(), refreshLive()]).catch(console.error); }
-refreshThresholds(); tick(); setInterval(tick, 1500);
+refreshThresholds(); refreshLogs(); tick(); setInterval(tick, 1500); setInterval(refreshLogs, 5000);
 </script>
 </body>
 </html>
